@@ -65,6 +65,3 @@ cd services/analyzer && python -m pytest
 cd apps/web && npm run test && npm run lint
 ```
 
-## License
-
-MIT — see the LICENSE file at the repository root.
