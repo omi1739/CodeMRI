@@ -1,0 +1,9 @@
+{
+  "name": "almost-no-tests-fixture",
+  "version": "1.0.0",
+  "description": "Source without tests fixture for CodeMRI.",
+  "scripts": { "start": "node src/server.js" },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

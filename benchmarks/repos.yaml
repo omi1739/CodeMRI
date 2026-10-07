@@ -1,0 +1,79 @@
+# CodeMRI benchmark suite.
+# Pin every repo to an exact commit SHA so results are reproducible across runs.
+# Run: scripts (pytest tests/test_benchmarks.py) or POST these URLs through the API.
+#
+# Review record per benchmark (docs/CONTEXT.md Section 13.1): true positives,
+# false positives, useful findings, missed findings, duration.
+
+repos:
+  - name: small-clean-project
+    url: https://github.com/lukeed/uvu
+    branch: master
+    commit_sha: 1a47ca14347e085330759911fc6c090e584be12f
+    size_kb: 322
+    profile: Small, well-maintained JS library with tests and README.
+    expect:
+      - FP-001            # detected stack
+      - not: DEP-003      # lockfile present? (uvu ships none - re-verify; update honestly)
+    notes: First end-to-end smoke benchmark.
+
+  - name: large-mature-project
+    url: https://github.com/expressjs/express
+    branch: master
+    commit_sha: 9169cbe1127ed1f9bc4f80a70b82c412467dd156
+    size_kb: 10001
+    profile: Large mature open-source JS project; also tests performance limits.
+    expect:
+      - FP-001
+
+  - name: vulnerable-dependencies
+    url: https://github.com/OWASP/NodeGoat
+    branch: master
+    commit_sha: c5cb68a7084e4ae7dcc60e6a98768720a81841e8
+    size_kb: 9227
+    profile: Intentionally vulnerable training app (OWASP NodeGoat).
+    expect:
+      - DEP-001           # known-vulnerable direct dependencies with exact versions
+    notes: DEP-001 must cite advisory IDs; never claim vulnerable without exact-version match.
+
+  - name: vulnerable-deps-alt
+    url: https://github.com/appsecco/dvna
+    branch: master
+    commit_sha: 9ba473add536f66ac9007966acb2a775dd31277a
+    size_kb: 3255
+    profile: Damn vulnerable Node app; second opinion for dependency advisories.
+    expect:
+      - DEP-001
+
+  # Synthetic fixtures (services/analyzer/tests/fixtures/) - deterministic, no network.
+  - name: fixture-clean-js
+    path: services/analyzer/tests/fixtures/clean-js
+    profile: Tiny healthy project: package.json + lockfile + test + README.
+    expect:
+      - FP-001
+      - not: DEP-003
+
+  - name: fixture-vulnerable-deps
+    path: services/analyzer/tests/fixtures/vulnerable-deps
+    profile: package.json pins known-vulnerable exact versions (network/OSV required).
+    expect:
+      - DEP-001
+
+  - name: fixture-circular-deps
+    path: services/analyzer/tests/fixtures/circular-deps
+    profile: a -> b -> a imports (Phase 9 must report ARC-001).
+    expect:
+      - FP-001
+
+  - name: fixture-almost-no-tests
+    path: services/analyzer/tests/fixtures/almost-no-tests
+    profile: Source without tests (Phase 6 must report TST-001/TST-004).
+    expect:
+      - FP-001
+
+  - name: fixture-secrets
+    path: services/analyzer/tests/fixtures/secrets
+    profile: Fake committed credentials + .env (Phase 4 must report SEC-001/SEC-002).
+    expect:
+      - FP-001
+    notes: FAKE keys only. Never use real credentials in fixtures.

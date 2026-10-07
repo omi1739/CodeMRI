@@ -1,0 +1,11 @@
+{
+  "name": "clean-js-fixture",
+  "version": "1.0.0",
+  "description": "Tiny healthy project fixture for CodeMRI analyzer tests.",
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}

@@ -1,0 +1,6 @@
+{
+  "name": "circular-deps-fixture",
+  "version": "1.0.0",
+  "description": "a -> b -> a import cycle fixture for CodeMRI.",
+  "scripts": { "test": "echo \"no tests\"" }
+}

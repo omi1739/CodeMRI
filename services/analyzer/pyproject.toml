@@ -1,0 +1,9 @@
+[project]
+name = "codemri-analyzer"
+version = "0.1.0"
+description = "CodeMRI analyzer service: GitHub repository intake, static analyzers, scoring"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

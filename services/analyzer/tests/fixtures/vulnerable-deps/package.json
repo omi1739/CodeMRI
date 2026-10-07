@@ -1,0 +1,9 @@
+{
+  "name": "vulnerable-deps-fixture",
+  "version": "1.0.0",
+  "description": "Exact-pinned known-vulnerable dependency versions for CodeMRI DEP-001 tests. FAKE project.",
+  "dependencies": {
+    "lodash": "4.17.15",
+    "minimist": "1.2.0"
+  }
+}
