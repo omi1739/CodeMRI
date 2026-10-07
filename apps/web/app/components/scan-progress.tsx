@@ -6,16 +6,14 @@ import { useRouter } from "next/navigation";
 import { formatMs, getScan, shortSha, type ScanStatus } from "@/app/lib/api";
 import { Card, ProgressBar, Spinner } from "@/app/components/ui";
 
-const STAGE_LABEL: Record<string, string> = {
-  queued: "Queued",
-  fetching: "Fetching repository",
-  fingerprinting: "Building fingerprint",
-  analyzing: "Running analyzers",
-  scoring: "Scoring",
-  reporting: "Compiling report",
-  completed: "Completed",
-  failed: "Failed",
-};
+const STAGES = [
+  { key: "queued", label: "Queued" },
+  { key: "fetching", label: "Fetching repository" },
+  { key: "fingerprinting", label: "Building fingerprint" },
+  { key: "analyzing", label: "Running analyzers" },
+  { key: "scoring", label: "Scoring" },
+  { key: "reporting", label: "Compiling report" },
+] as const;
 
 export default function ScanProgress({ scanId }: { scanId: number }) {
   const router = useRouter();
@@ -58,7 +56,7 @@ export default function ScanProgress({ scanId }: { scanId: number }) {
 
   if (error) {
     return (
-      <div className="mx-auto w-full max-w-3xl px-6 py-16">
+      <div className="mx-auto w-full max-w-3xl px-4 py-16 sm:px-6">
         <Card className="border-red-500/30">
           <h2 className="text-lg font-semibold text-red-300">
             Scan could not be completed
@@ -87,15 +85,15 @@ export default function ScanProgress({ scanId }: { scanId: number }) {
     );
   }
 
+  const currentStage = scan?.current_stage ?? null;
+
   return (
-    <div className="mx-auto w-full max-w-3xl px-6 py-16">
+    <div className="mx-auto w-full max-w-3xl px-4 py-16 sm:px-6">
       <Card>
         <div className="mb-6">
-          <p className="text-xs uppercase tracking-wider text-zinc-500">
-            Scanning
-          </p>
+          <p className="text-xs uppercase tracking-wider text-zinc-500">Scanning</p>
           <h1 className="mt-1 flex items-center gap-3 text-2xl font-semibold tracking-tight text-zinc-100">
-            {scan?.repository ?? "…"}
+            <span className="truncate">{scan?.repository ?? "…"}</span>
             <Spinner />
           </h1>
           {scan?.repository_url ? (
@@ -103,7 +101,7 @@ export default function ScanProgress({ scanId }: { scanId: number }) {
               href={scan.repository_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="mt-1 inline-block text-sm text-indigo-400 hover:text-indigo-300"
+              className="mt-1 inline-block truncate text-sm text-indigo-400 hover:text-indigo-300"
             >
               {scan.repository_url.replace(/^https?:\/\//, "")}
             </a>
@@ -112,11 +110,11 @@ export default function ScanProgress({ scanId }: { scanId: number }) {
 
         <div className="flex items-end justify-between gap-4">
           <p className="text-sm text-zinc-400">
-            {scan
-              ? STAGE_LABEL[scan.current_stage ?? ""] ??
-                scan.current_stage ??
-                "Starting"
-              : "Contacting analyzer…"}
+            {currentStage === "completed"
+              ? "Completed"
+              : currentStage
+                ? STAGES.find((s) => s.key === currentStage)?.label ?? currentStage
+                : "Contacting analyzer…"}
           </p>
           <p className="text-sm tabular-nums text-zinc-400">
             {scan?.progress_pct ?? 0}%
@@ -125,6 +123,49 @@ export default function ScanProgress({ scanId }: { scanId: number }) {
         <div className="mt-2">
           <ProgressBar value={scan?.progress_pct ?? 0} />
         </div>
+
+        <ol className="mt-6 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-0">
+          {STAGES.map((stage, index) => {
+            const stageIndex = STAGES.findIndex((s) => s.key === currentStage);
+            const done = currentStage != null && index < stageIndex;
+            const current = currentStage === stage.key;
+            const isLast = index === STAGES.length - 1;
+            return (
+              <li
+                key={stage.key}
+                className="flex items-center gap-2 text-xs sm:flex-1"
+              >
+                <span className="flex items-center gap-2">
+                  <span
+                    className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold transition ${
+                      done
+                        ? "bg-emerald-500/20 text-emerald-400"
+                        : current
+                          ? "bg-indigo-500/25 text-indigo-300 ring-1 ring-inset ring-indigo-500/40"
+                          : "bg-zinc-800 text-zinc-600"
+                    }`}
+                  >
+                    {done ? "✓" : index + 1}
+                  </span>
+                  <span
+                    className={
+                      done || current ? "text-zinc-300" : "text-zinc-600"
+                    }
+                  >
+                    {stage.label}
+                  </span>
+                </span>
+                {!isLast ? (
+                  <span
+                    className={`mx-2 hidden h-px flex-1 sm:block ${
+                      done ? "bg-emerald-500/40" : "bg-zinc-800"
+                    }`}
+                  />
+                ) : null}
+              </li>
+            );
+          })}
+        </ol>
 
         <dl className="mt-6 grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-4">
           <div>
@@ -157,12 +198,21 @@ export default function ScanProgress({ scanId }: { scanId: number }) {
       {scan && scan.analyzer_runs.length > 0 ? (
         <Card className="mt-6">
           <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-zinc-500">
-            Analysers
+            Analyzers
           </h2>
           <ul className="divide-y divide-zinc-800">
             {scan.analyzer_runs.map((run) => (
               <li key={run.analyzer} className="flex items-center gap-3 py-3">
-                <span className="w-32 text-sm font-medium text-zinc-300">
+                <span
+                  className={`h-2 w-2 shrink-0 rounded-full ${
+                    run.status === "running"
+                      ? "animate-pulse bg-indigo-400"
+                      : run.finding_count != null
+                        ? "bg-emerald-500/70"
+                        : "bg-zinc-700"
+                  }`}
+                />
+                <span className="w-32 truncate text-sm font-medium text-zinc-300 sm:w-44">
                   {run.analyzer}
                 </span>
                 <span className="text-xs text-zinc-600">{run.version}</span>

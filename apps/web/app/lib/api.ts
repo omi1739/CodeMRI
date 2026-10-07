@@ -212,8 +212,21 @@ export function getReport(scanId: number): Promise<Report> {
   return request<Report>(`/api/scans/${scanId}/report`);
 }
 
-export function listFindings(scanId: number, limit = 100): Promise<FindingsPage> {
-  return request<FindingsPage>(`/api/scans/${scanId}/findings?limit=${limit}`);
+export interface FindingsQuery {
+  limit?: number;
+  offset?: number;
+  category?: string;
+  severity?: string;
+}
+
+export function listFindings(scanId: number, query: FindingsQuery = {}): Promise<FindingsPage> {
+  const params = new URLSearchParams();
+  if (query.limit != null) params.set("limit", String(query.limit));
+  if (query.offset != null) params.set("offset", String(query.offset));
+  if (query.category) params.set("category", query.category);
+  if (query.severity) params.set("severity", query.severity);
+  const qs = params.toString();
+  return request<FindingsPage>(`/api/scans/${scanId}/findings${qs ? `?${qs}` : ""}`);
 }
 
 export function getFinding(id: string): Promise<FindingDetail> {

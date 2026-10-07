@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   getComparison,
@@ -20,6 +20,8 @@ import {
   ScoreRing,
   SectionTitle,
   SeverityBadge,
+  scoreBarTone,
+  scoreLabelTone,
 } from "@/app/components/ui";
 
 const EFFORT_LABEL: Record<string, string> = {
@@ -34,45 +36,35 @@ const TARGET_LABEL: Record<string, string> = {
   production: "Production",
 };
 
+const SEVERITY_ORDER = ["critical", "high", "medium", "low"] as const;
+
 export default function ReportView({ scanId }: { scanId: number }) {
   const [report, setReport] = useState<Report | null>(null);
   const [comparison, setComparison] = useState<Comparison | null>(null);
-  const [summaries, setSummaries] = useState<FindingSummary[]>([]);
-  const [details, setDetails] = useState<Map<string, FindingDetail>>(new Map());
-  const [failedDetails, setFailedDetails] = useState<string[]>([]);
+  const [items, setItems] = useState<FindingSummary[]>([]);
   const [total, setTotal] = useState(0);
+  const [offset, setOffset] = useState(0);
+  const [findingsLoading, setFindingsLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [category, setCategory] = useState<string>("all");
+  const [details, setDetails] = useState<Map<string, FindingDetail>>(new Map());
+  const [failed, setFailed] = useState<Set<string>>(new Set());
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [loadingId, setLoadingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const loadSeq = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const [reportData, findings, comparisonData] = await Promise.all([
+        const [reportData, comparisonData] = await Promise.all([
           getReport(scanId),
-          listFindings(scanId, 100),
           getComparison(scanId).catch(() => null),
         ]);
         if (cancelled) return;
         setReport(reportData);
-        setSummaries(findings.items);
-        setTotal(findings.total);
         setComparison(comparisonData);
-
-        const detailMap = new Map<string, FindingDetail>();
-        const failed: string[] = [];
-        await Promise.all(
-          findings.items.map(async (item) => {
-            try {
-              const detail = await getFinding(item.id);
-              detailMap.set(item.id, detail);
-            } catch {
-              failed.push(item.id);
-            }
-          })
-        );
-        if (cancelled) return;
-        setDetails(detailMap);
-        setFailedDetails(failed);
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : "Could not load the report.");
@@ -84,6 +76,79 @@ export default function ReportView({ scanId }: { scanId: number }) {
     };
   }, [scanId]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const seq = loadSeq.current;
+    (async () => {
+      try {
+        const page = await listFindings(scanId, {
+          limit: 100,
+          category: category === "all" ? undefined : category,
+        });
+        if (cancelled) return;
+        setItems(page.items);
+        setTotal(page.total);
+        setOffset(page.offset);
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Could not load findings.");
+        }
+      } finally {
+        if (!cancelled && seq === loadSeq.current) setFindingsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [scanId, category]);
+
+  const toggleExpand = useCallback(
+    async (item: FindingSummary) => {
+      setExpanded((prev) => {
+        const next = new Set(prev);
+        if (next.has(item.id)) next.delete(item.id);
+        else next.add(item.id);
+        return next;
+      });
+      if (details.has(item.id) || failed.has(item.id)) return;
+      setLoadingId(item.id);
+      try {
+        const detail = await getFinding(item.id);
+        setDetails((prev) => new Map(prev).set(item.id, detail));
+      } catch {
+        setFailed((prev) => new Set(prev).add(item.id));
+      } finally {
+        setLoadingId(null);
+      }
+    },
+    [details, failed]
+  );
+
+  const selectCategory = (value: string) => {
+    loadSeq.current += 1;
+    setFindingsLoading(true);
+    setCategory(value);
+  };
+
+  const loadMore = useCallback(async () => {
+    if (loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const page = await listFindings(scanId, {
+        limit: 100,
+        offset,
+        category: category === "all" ? undefined : category,
+      });
+      setItems((prev) => [...prev, ...page.items]);
+      setTotal(page.total);
+      setOffset(page.offset);
+    } catch {
+      setError("Could not load more findings.");
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [scanId, offset, category, loadingMore]);
+
   if (error) {
     return (
       <div className="mx-auto w-full max-w-5xl px-6 py-16">
@@ -92,7 +157,7 @@ export default function ReportView({ scanId }: { scanId: number }) {
           <p className="mt-2 text-sm text-zinc-400">{error}</p>
           <Link
             href="/"
-            className="mt-4 inline-block rounded-lg bg-zinc-800 px-4 py-2 text-sm font-medium text-zinc-200 transition hover:bg-zinc-700"
+            className="mt-4 inline-block rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-200 transition hover:border-zinc-500 hover:text-zinc-100"
           >
             Back home
           </Link>
@@ -111,61 +176,87 @@ export default function ReportView({ scanId }: { scanId: number }) {
   }
 
   const fingerprint = report.fingerprint;
-  const severityTotal =
-    Object.values(report.severity_counts).reduce((sum, n) => sum + n, 0) || 0;
+  const counts = report.counts ?? {};
+  const categoryOptions = Object.keys(counts).sort();
+  const remaining = total - items.length;
 
   return (
-    <div className="mx-auto w-full max-w-5xl px-6 py-10">
+    <div className="mx-auto w-full max-w-5xl px-4 py-8 sm:px-6 sm:py-10">
       <header className="mb-8">
-        <div className="flex items-start justify-between gap-4">
-          <div>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0">
             <p className="text-xs uppercase tracking-wider text-zinc-500">
-              Scan #{report.scan_id} · {report.target}
+              Scan #{report.scan_id} · {TARGET_LABEL[report.target] ?? report.target} target
             </p>
-            <h1 className="mt-1 text-3xl font-semibold tracking-tight text-zinc-50">
-              <a
-                href={report.repository_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="hover:text-indigo-300"
-              >
-                {report.repository}
-              </a>
-            </h1>
+            <div className="mt-1 flex flex-wrap items-center gap-3">
+              <h1 className="text-2xl font-semibold tracking-tight text-zinc-50 sm:text-3xl">
+                <a
+                  href={report.repository_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hover:text-indigo-300"
+                >
+                  {report.repository}
+                </a>
+              </h1>
+              {report.label ? (
+                <span
+                  className={`rounded-full px-3 py-1 text-xs font-semibold ring-1 ring-inset ${scoreLabelTone(report.label)}`}
+                >
+                  {report.label}
+                </span>
+              ) : null}
+            </div>
             <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-zinc-500">
               <span>{report.branch}</span>
-              {report.commit_sha ? <span className="font-mono">{shortSha(report.commit_sha)}</span> : null}
-              {report.finished_at ? <span>{new Date(report.finished_at).toLocaleString()}</span> : null}
+              {report.commit_sha ? (
+                <span className="font-mono text-xs">{shortSha(report.commit_sha)}</span>
+              ) : null}
+              {report.finished_at ? (
+                <span>{new Date(report.finished_at).toLocaleString()}</span>
+              ) : null}
+              <span className="text-zinc-700">· 9 analyzers</span>
             </p>
           </div>
-          <Link
-            href="/"
-            className="shrink-0 rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
-          >
-            New scan
-          </Link>
+          <div className="flex shrink-0 items-center gap-2">
+            <Link
+              href="/history"
+              className="rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
+            >
+              History
+            </Link>
+            <Link
+              href="/"
+              className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-medium text-white shadow-lg shadow-indigo-500/25 transition hover:bg-indigo-400"
+            >
+              New scan
+            </Link>
+          </div>
         </div>
       </header>
 
       <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
         <aside className="flex flex-col gap-6">
-          <Card className="flex flex-col items-center gap-4">
+          <Card className="flex flex-col items-center gap-3">
             <ScoreRing score={report.overall_score ?? 0} />
-            <span className="rounded-full bg-zinc-800 px-3 py-1 text-sm font-medium text-zinc-200">
-              {report.label ?? "No label"}
-            </span>
-            <div className="flex flex-wrap justify-center gap-2">
-              {(["critical", "high", "medium", "low"] as const).map((level) => {
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {SEVERITY_ORDER.map((level) => {
                 const count = report.severity_counts[level];
                 if (!count) return null;
-                return <SeverityBadge key={level} severity={level} />;
+                return (
+                  <span
+                    key={level}
+                    className="flex items-center gap-1.5 rounded-full bg-zinc-800/70 py-1 pl-1 pr-2.5"
+                  >
+                    <SeverityBadge severity={level} />
+                    <span className="text-xs tabular-nums text-zinc-300">{count}</span>
+                  </span>
+                );
               })}
-              {severityTotal === 0 ? (
-                <span className="text-sm text-emerald-400">
-                  No findings — clean scan
-                </span>
-              ) : null}
             </div>
+            {SEVERITY_ORDER.every((level) => !report.severity_counts[level]) ? (
+              <span className="text-sm text-emerald-400">No findings — clean scan</span>
+            ) : null}
           </Card>
 
           {comparison && comparison.comparisons.length > 0 ? (
@@ -288,7 +379,7 @@ export default function ReportView({ scanId }: { scanId: number }) {
                     </div>
                     <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
                       <div
-                        className="h-full rounded-full bg-emerald-500"
+                        className={`h-full rounded-full transition-all duration-700 ${scoreBarTone(score.score)}`}
                         style={{ width: `${score.score}%` }}
                       />
                     </div>
@@ -309,7 +400,10 @@ export default function ReportView({ scanId }: { scanId: number }) {
               <SectionTitle>Top recommendations</SectionTitle>
               <ol className="mt-4 flex flex-col gap-4">
                 {report.recommendations.map((rec) => (
-                  <li key={rec.rank} className="rounded-lg bg-zinc-900/80 p-4 ring-1 ring-inset ring-zinc-800">
+                  <li
+                    key={rec.rank}
+                    className="rounded-lg bg-zinc-900/80 p-4 ring-1 ring-inset ring-zinc-800"
+                  >
                     <div className="flex items-start justify-between gap-3">
                       <h3 className="text-sm font-semibold text-zinc-100">
                         <span className="mr-2 inline-flex h-6 w-6 items-center justify-center rounded-full bg-indigo-500/15 text-xs font-semibold text-indigo-300">
@@ -317,7 +411,7 @@ export default function ReportView({ scanId }: { scanId: number }) {
                         </span>
                         {rec.title}
                       </h3>
-                      <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-xs font-medium text-zinc-400">
+                      <span className="shrink-0 rounded-full bg-zinc-800 px-2 py-0.5 text-xs font-medium text-zinc-400">
                         {EFFORT_LABEL[rec.effort] ?? rec.effort} effort
                       </span>
                     </div>
@@ -325,7 +419,9 @@ export default function ReportView({ scanId }: { scanId: number }) {
                       {rec.explanation}
                     </p>
                     <div className="mt-3 flex flex-wrap items-center gap-2">
-                      <span className="text-xs text-emerald-400">{rec.expected_impact}</span>
+                      <span className="text-xs text-emerald-400">
+                        {rec.expected_impact}
+                      </span>
                       {rec.finding_ids.slice(0, 5).map((id) => (
                         <a
                           key={id}
@@ -343,139 +439,230 @@ export default function ReportView({ scanId }: { scanId: number }) {
           ) : null}
 
           <Card>
-            <SectionTitle>
-              Findings{" "}
-              <span className="text-zinc-600">
-                · {total} total, {summaries.length} shown
-              </span>
-            </SectionTitle>
-            {summaries.length === 0 ? (
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <SectionTitle>
+                Findings{" "}
+                <span className="text-zinc-600">
+                  · {total} {total === 1 ? "finding" : "findings"}
+                </span>
+              </SectionTitle>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <FilterPill
+                  active={category === "all"}
+                  onClick={() => selectCategory("all")}
+                  label="All"
+                />
+                {categoryOptions.map((cat) => (
+                  <FilterPill
+                    key={cat}
+                    active={category === cat}
+                    onClick={() => selectCategory(cat)}
+                    label={cat.replaceAll("_", " ")}
+                    count={counts[cat]}
+                  />
+                ))}
+              </div>
+            </div>
+
+            {findingsLoading ? (
+              <ul className="mt-4 flex flex-col gap-4">
+                {[0, 1, 2, 3].map((i) => (
+                  <li
+                    key={i}
+                    className="rounded-lg bg-zinc-900/80 p-4 ring-1 ring-inset ring-zinc-800"
+                  >
+                    <div className="h-3 w-2/5 animate-pulse rounded bg-zinc-800" />
+                    <div className="mt-3 h-3 w-4/5 animate-pulse rounded bg-zinc-800/70" />
+                    <div className="mt-2 h-3 w-3/5 animate-pulse rounded bg-zinc-800/70" />
+                  </li>
+                ))}
+              </ul>
+            ) : items.length === 0 ? (
               <div className="mt-4 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-4 py-6 text-center">
                 <p className="text-sm font-medium text-emerald-400">
-                  No findings for this target
+                  No findings {category !== "all" ? "in this category" : "for this target"}
                 </p>
                 <p className="mt-1 text-xs text-zinc-500">
                   Nothing matched the analyzer rules at this weight and confidence.
                 </p>
               </div>
             ) : (
-              <>
-                <ul className="mt-4 flex flex-col gap-4">
-                  {summaries.map((item) => {
-                    const detail = details.get(item.id);
-                    const showSkeleton = !detail && !failedDetails.includes(item.id);
-                    return (
-                      <li
-                        key={item.id}
-                        id={item.id}
-                        className="scroll-mt-6 rounded-lg bg-zinc-900/80 p-4 ring-1 ring-inset ring-zinc-800"
+              <ul className="mt-4 flex flex-col gap-3">
+                {items.map((item) => {
+                  const isOpen = expanded.has(item.id);
+                  const detail = details.get(item.id);
+                  const isLoading = loadingId === item.id;
+                  const showFailure = failed.has(item.id) && !detail;
+                  return (
+                    <li
+                      key={item.id}
+                      id={item.id}
+                      className="scroll-mt-6 rounded-lg bg-zinc-900/80 ring-1 ring-inset ring-zinc-800 transition hover:ring-zinc-700"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => toggleExpand(item)}
+                        className="flex w-full items-start gap-3 p-4 text-left"
+                        aria-expanded={isOpen}
                       >
-                        <div className="flex flex-wrap items-center gap-2">
-                          <SeverityBadge severity={item.severity} />
-                          <span className="font-mono text-xs text-zinc-500">
-                            {item.rule_id}
+                        <span
+                          className="mt-0.5 shrink-0 select-none text-zinc-600 transition-transform duration-200"
+                          style={{ transform: isOpen ? "rotate(90deg)" : "none" }}
+                        >
+                          ▸
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="flex flex-wrap items-center gap-2">
+                            <SeverityBadge severity={item.severity} />
+                            <span className="font-mono text-xs text-zinc-500">
+                              {item.rule_id}
+                            </span>
+                            <span className="ml-auto font-mono text-xs text-zinc-600">
+                              ×{item.occurrence_count}
+                            </span>
                           </span>
-                          <span className="ml-auto font-mono text-xs text-zinc-500">
-                            {item.id} · ×{item.occurrence_count}
+                          <span className="mt-1.5 block text-sm font-semibold text-zinc-100">
+                            {item.title}
                           </span>
-                        </div>
-                        <h3 className="mt-2 text-sm font-semibold text-zinc-100">
-                          {item.title}
-                        </h3>
-                        <p className="mt-2 text-sm leading-6 text-zinc-400">
-                          {showSkeleton ? (
-                            <span className="text-zinc-600">Loading evidence…</span>
-                          ) : (
-                            detail?.description
-                          )}
-                        </p>
+                        </span>
+                      </button>
 
-                        {detail && detail.evidence.length > 0 ? (
-                          <div className="mt-3 flex flex-col gap-2">
-                            {detail.evidence.slice(0, 3).map((ev, index) => (
-                              <div
-                                key={index}
-                                className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-3"
-                              >
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <span className="font-mono text-xs text-zinc-300">
-                                    {ev.file_path}
-                                  </span>
-                                  {ev.line_start ? (
-                                    <span className="font-mono text-xs text-zinc-600">
-                                      L{ev.line_start}
-                                      {ev.line_end && ev.line_end !== ev.line_start
-                                        ? `–L${ev.line_end}`
-                                        : ""}
-                                    </span>
-                                  ) : null}
-                                  {ev.symbol ? (
-                                    <span className="text-xs text-zinc-500">{ev.symbol}</span>
-                                  ) : null}
-                                  {ev.metric_name ? (
-                                    <span className="text-xs text-zinc-500">
-                                      {ev.metric_name}: {ev.metric_value}
-                                    </span>
-                                  ) : null}
-                                  {ev.permalink ? (
-                                    <a
-                                      href={ev.permalink}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="ml-auto text-xs font-medium text-indigo-400 hover:text-indigo-300"
+                      {isOpen ? (
+                        <div className="space-y-2 border-t border-zinc-800/80 px-4 py-3 pl-9">
+                          {isLoading ? (
+                            <div className="flex items-center gap-2 text-sm text-zinc-500">
+                              <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-zinc-500 border-t-transparent" />
+                              Loading evidence…
+                            </div>
+                          ) : showFailure ? (
+                            <p className="text-sm text-red-400">
+                              Could not load evidence for this finding.
+                            </p>
+                          ) : detail ? (
+                            <>
+                              {detail.description ? (
+                                <p className="text-sm leading-6 text-zinc-400">
+                                  {detail.description}
+                                </p>
+                              ) : null}
+                              {detail.evidence.length > 0 ? (
+                                <div className="flex flex-col gap-2">
+                                  {detail.evidence.map((ev, index) => (
+                                    <div
+                                      key={index}
+                                      className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-3"
                                     >
-                                      View on GitHub ↗
-                                    </a>
-                                  ) : null}
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <span className="font-mono text-xs text-zinc-300">
+                                          {ev.file_path}
+                                        </span>
+                                        {ev.line_start ? (
+                                          <span className="font-mono text-xs text-zinc-600">
+                                            L{ev.line_start}
+                                            {ev.line_end && ev.line_end !== ev.line_start
+                                              ? `–L${ev.line_end}`
+                                              : ""}
+                                          </span>
+                                        ) : null}
+                                        {ev.symbol ? (
+                                          <span className="text-xs text-zinc-500">
+                                            {ev.symbol}
+                                          </span>
+                                        ) : null}
+                                        {ev.metric_name ? (
+                                          <span className="text-xs text-zinc-500">
+                                            {ev.metric_name}: {ev.metric_value}
+                                          </span>
+                                        ) : null}
+                                        {ev.permalink ? (
+                                          <a
+                                            href={ev.permalink}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="ml-auto text-xs font-medium text-indigo-400 hover:text-indigo-300"
+                                          >
+                                            View on GitHub ↗
+                                          </a>
+                                        ) : null}
+                                      </div>
+                                      {ev.snippet ? (
+                                        <pre className="mt-2 max-h-40 overflow-auto rounded bg-zinc-900 p-2 font-mono text-xs leading-5 text-zinc-300">
+                                          {ev.snippet}
+                                        </pre>
+                                      ) : null}
+                                      {ev.reason ? (
+                                        <p className="mt-2 text-xs italic text-zinc-500">
+                                          {ev.reason}
+                                        </p>
+                                      ) : null}
+                                    </div>
+                                  ))}
                                 </div>
-                                {ev.snippet ? (
-                                  <pre className="mt-2 max-h-40 overflow-auto rounded bg-zinc-900 p-2 font-mono text-xs leading-5 text-zinc-300">
-                                    {ev.snippet}
-                                  </pre>
-                                ) : null}
-                                {ev.reason ? (
-                                  <p className="mt-2 text-xs italic text-zinc-500">
-                                    {ev.reason}
-                                  </p>
-                                ) : null}
+                              ) : null}
+                              {detail.recommendation ? (
+                                <p className="text-xs leading-5 text-zinc-500">
+                                  <span className="font-medium text-zinc-400">
+                                    Fix:{" "}
+                                  </span>
+                                  {detail.recommendation}
+                                </p>
+                              ) : null}
+                              <div className="flex items-center gap-2 pt-1">
+                                <ConfidenceBadge confidence={item.confidence} />
+                                <span className="text-xs capitalize text-zinc-600">
+                                  {item.category} · {item.id}
+                                </span>
                               </div>
-                            ))}
-                            {detail.evidence.length > 3 ? (
-                              <p className="text-xs text-zinc-600">
-                                + {detail.evidence.length - 3} more occurrences
-                              </p>
-                            ) : null}
-                          </div>
-                        ) : null}
-
-                        {detail && detail.recommendation ? (
-                          <p className="mt-3 text-xs leading-5 text-zinc-500">
-                            <span className="font-medium text-zinc-400">Fix: </span>
-                            {detail.recommendation}
-                          </p>
-                        ) : null}
-
-                        <div className="mt-3 flex items-center gap-2">
-                          <ConfidenceBadge confidence={item.confidence} />
-                          <span className="text-xs capitalize text-zinc-600">
-                            {detail?.category ?? item.category}
-                          </span>
+                            </>
+                          ) : null}
                         </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-                {total > summaries.length ? (
-                  <p className="mt-4 text-xs text-zinc-600">
-                    Showing {summaries.length} of {total} findings — expand the list
-                    via the API to see the rest.
-                  </p>
-                ) : null}
-              </>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
             )}
+
+            {remaining > 0 ? (
+              <button
+                type="button"
+                onClick={loadMore}
+                disabled={loadingMore}
+                className="mt-4 w-full rounded-lg border border-zinc-800 bg-zinc-900/60 py-2.5 text-sm font-medium text-zinc-300 transition hover:border-zinc-600 hover:text-zinc-100 disabled:opacity-60"
+              >
+                {loadingMore ? "Loading…" : `Load more (${remaining} remaining)`}
+              </button>
+            ) : null}
           </Card>
         </div>
       </div>
     </div>
+  );
+}
+
+function FilterPill({
+  active,
+  onClick,
+  label,
+  count,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  count?: number;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-full px-3 py-1 text-xs font-medium capitalize transition ${
+        active
+          ? "bg-indigo-500/15 text-indigo-200 ring-1 ring-inset ring-indigo-500/40"
+          : "bg-zinc-900 text-zinc-400 ring-1 ring-inset ring-zinc-800 hover:text-zinc-200"
+      }`}
+    >
+      {label.replaceAll("_", " ")}
+      {count != null ? <span className="ml-1 text-zinc-500">{count}</span> : null}
+    </button>
   );
 }
