@@ -50,6 +50,15 @@ function b() {
 module.exports = { b };
 '''
 
+# Materialized at test time only; the committed fixture directory never
+# contains a .env file (it is gitignored and would be absent from clean
+# checkouts, which is exactly why SEC-002 must be tested against tmp_path).
+SECRETS_ENV = """\
+# Runtime fixture environment (see conftest.py)
+NODE_ENV=test
+FAKE_API_KEY=placeholder
+"""
+
 
 def _materialize(name: str, tmp_path: Path, overwrite: dict[str, str]) -> Path:
     dest = tmp_path / name
@@ -90,4 +99,8 @@ def vulnerable_deps(fixtures_dir: Path) -> Path:
 
 @pytest.fixture
 def secrets(tmp_path: Path) -> Path:
-    return _materialize("secrets", tmp_path, {"src/config.js": SECRETS_CONFIG_JS})
+    return _materialize(
+        "secrets",
+        tmp_path,
+        {"src/config.js": SECRETS_CONFIG_JS, ".env": SECRETS_ENV},
+    )
