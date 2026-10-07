@@ -1,10 +1,62 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+# ---------------------------------------------------------------------------
+# Trigger content is materialized at test time (these modules are plain .py, so
+# the committed repository never contains secret-shaped strings or circular
+# imports on disk — the analyzer sees them only inside pytest's tmp dir).
+# ---------------------------------------------------------------------------
+
+SECRETS_CONFIG_JS = '''\
+"use strict";
+
+// FAKE credentials for testing only. Do not use.
+const config = {
+  awsAccessKeyId: "AKIAIOSFODNN7FAKEKEY",
+  githubToken: "ghp_FAKEFAKEFAKEFAKEFAKEFAKE12",
+  apiKey: "super-secret-demo-key-000111222333",
+};
+
+module.exports = { config };
+'''
+
+CIRCULAR_A_JS = '''\
+"use strict";
+
+const { b } = require("./b.js");
+
+function a() {
+  return b();
+}
+
+module.exports = { a };
+'''
+
+CIRCULAR_B_JS = '''\
+"use strict";
+
+const { a } = require("./a.js");
+
+function b() {
+  return a();
+}
+
+module.exports = { b };
+'''
+
+
+def _materialize(name: str, tmp_path: Path, overwrite: dict[str, str]) -> Path:
+    dest = tmp_path / name
+    shutil.copytree(FIXTURES / name, dest)
+    for rel, content in overwrite.items():
+        (dest / rel).write_text(content, encoding="utf-8")
+    return dest
 
 
 @pytest.fixture
@@ -18,8 +70,12 @@ def clean_js(fixtures_dir: Path) -> Path:
 
 
 @pytest.fixture
-def circular_deps(fixtures_dir: Path) -> Path:
-    return fixtures_dir / "circular-deps"
+def circular_deps(tmp_path: Path) -> Path:
+    return _materialize(
+        "circular-deps",
+        tmp_path,
+        {"a.js": CIRCULAR_A_JS, "b.js": CIRCULAR_B_JS},
+    )
 
 
 @pytest.fixture
@@ -33,5 +89,5 @@ def vulnerable_deps(fixtures_dir: Path) -> Path:
 
 
 @pytest.fixture
-def secrets(fixtures_dir: Path) -> Path:
-    return fixtures_dir / "secrets"
+def secrets(tmp_path: Path) -> Path:
+    return _materialize("secrets", tmp_path, {"src/config.js": SECRETS_CONFIG_JS})

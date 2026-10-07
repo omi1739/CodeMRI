@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from app.analyzers._shared import locate_package_json
 from app.analyzers.base import Evidence, Finding, ScanContext
 from app.analyzers.fingerprint.inventory import build_inventory, inventory_as_dicts
 
@@ -68,16 +69,6 @@ PACKAGE_MANAGER_FILES = [
 ]
 
 
-def _read_package_json(root: Path) -> dict:
-    path = root / "package.json"
-    if not path.is_file():
-        return {}
-    try:
-        return json.loads(path.read_text(encoding="utf-8", errors="replace"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-
 def _present(dependencies: dict, mapping: dict[str, str]) -> list[str]:
     found = []
     for dep in dependencies:
@@ -88,17 +79,20 @@ def _present(dependencies: dict, mapping: dict[str, str]) -> list[str]:
     return sorted(found)
 
 
-def _detect(root: Path, inventory: list[dict], package_json: dict) -> dict:
+def _detect(root: Path, inventory: list[dict], package_json: dict, pkg_dir: Path) -> dict:
     deps = {**package_json.get("dependencies", {}), **package_json.get("devDependencies", {})}
     paths = {entry["path"] for entry in inventory}
     languages = sorted({e["language"] for e in inventory if e.get("language") and e.get("loc", 0) > 0})
 
     package_manager = next(
-        (name for file, name in PACKAGE_MANAGER_FILES if (root / file).is_file()), None
+        (name for file, name in PACKAGE_MANAGER_FILES if (pkg_dir / file).is_file()), None
     )
 
+    tsconfigs = list(root.rglob("tsconfig.json")) if root.is_dir() else []
+    tsconfigs = [p for p in tsconfigs if "node_modules" not in p.parts]
+
     flags = {
-        "typescript": (root / "tsconfig.json").is_file()
+        "typescript": bool(tsconfigs)
         or any(lang == "TypeScript" for lang in languages),
         "docker": any(p.lower() == "dockerfile" for p in paths)
         or any(p.endswith(("docker-compose.yml", "docker-compose.yaml")) for p in paths),
@@ -139,8 +133,8 @@ class FingerprintAnalyzer:
             root, max_files=20000, max_file_size_kb=1024
         )
         ctx.inventory = inventory_as_dicts(inventory)
-        package_json = _read_package_json(root)
-        fingerprint = _detect(root, ctx.inventory, package_json)
+        pkg_dir, package_json = locate_package_json(root)
+        fingerprint = _detect(root, ctx.inventory, package_json, pkg_dir)
         ctx.fingerprint = fingerprint
 
         stack_bits: list[str] = []
@@ -170,7 +164,7 @@ class FingerprintAnalyzer:
                     severity="info",
                     confidence="high",
                     description=(
-                        "No package.json was found at the repository root. CodeMRI V1 only "
+                        "No package.json was found in this repository. CodeMRI V1 only "
                         "analyzes JavaScript/TypeScript projects, so dependency, quality and "
                         "test analysis will be limited or skipped."
                     ),

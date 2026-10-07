@@ -1,10 +1,12 @@
 "use strict";
 
-// FAKE credentials for testing only. Do not use.
+// Placeholder fixture content. The fake credential values used by the secret
+// detection tests are written into a pytest tmp dir at runtime (see conftest.py)
+// so no secret-shaped strings are committed to this repository.
 const config = {
-  awsAccessKeyId: "AKIAIOSFODNN7FAKEKEY",
-  githubToken: "ghp_FAKEFAKEFAKEFAKEFAKEFAKE12",
-  apiKey: "super-secret-demo-key-000111222333",
+  awsAccessKeyId: "",
+  githubToken: "",
+  apiKey: "",
 };
 
 module.exports = { config };

@@ -39,7 +39,9 @@ _ASSIGNMENT_RE = re.compile(
 _EVAL_RE = re.compile(r"\beval\s*\(")
 _INNER_HTML_RE = re.compile(r"\.?innerHTML\s*=|dangerouslySetInnerHTML")
 _SQL_CONCAT_RE = re.compile(
-    r"""(?i)(SELECT|INSERT|UPDATE|DELETE|DROP)\b[^'\"]*['\"]]?\s*\+|['\"]\s*\+|\$\{[\w.]+\}\s*['\"]""",
+    r"""(?i)\b(SELECT|INSERT|UPDATE|DELETE|DROP)\b[^'";\n]{0,80}\s*\+\s*['\"]"""
+    r"""|['\"]\s*\+\s*['\"][^'\"\n]{0,60}\s*\b(SELECT|INSERT|UPDATE|DELETE|DROP)\b"""
+    r"""|\$\{[^}\n]{1,60}\}\s*\b(SELECT|INSERT|UPDATE|DELETE|DROP)\b"""
 )
 _DYNAMIC_QUERY_RE = re.compile(r"(?i)\b(db|client|pool|knex|sequelize)\w*\.(query|exec|raw)\s*\(\s*['\"`]\s*(SELECT|INSERT|UPDATE|DELETE|DROP)")
 

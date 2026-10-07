@@ -1,11 +1,35 @@
 from __future__ import annotations
 
+import json
 import posixpath
 import re
 from pathlib import Path
 
 SOURCE_EXTS = (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".vue", ".svelte")
-ENTRY_NAMES = {"index", "main", "app", "server", "cli", "entry", "bootstrap"}
+ENTRY_NAMES = {
+    "index",
+    "main",
+    "app",
+    "server",
+    "cli",
+    "entry",
+    "bootstrap",
+    # framework entry conventions (Next.js, Remix, SvelteKit, etc.)
+    "page",
+    "layout",
+    "route",
+    "loading",
+    "error",
+    "not-found",
+    "not_found",
+    "template",
+    "default",
+    "middleware",
+    "proxy",
+    "global-error",
+    "$",
+    "@",
+}
 
 _IMPORT_RE = re.compile(
     r"""(?:import\s+(?:[\w*{}\s,]+\s+from\s+)?|export\s+[\w*{}\s,]+\s+from\s+|require\()\s*['"]([^'"]+)['"]"""
@@ -21,7 +45,49 @@ def is_source_path(path: str) -> bool:
 def is_entry_path(path: str) -> bool:
     name = posixpath.basename(path).lower()
     stem = name.split(".")[0] if "." in name else name
-    return stem in ENTRY_NAMES
+    if stem in ENTRY_NAMES:
+        return True
+    if name == "next.config" or name.startswith(("next.config.", "next-env.")):
+        return True
+    if ".config." in name or name.endswith(".config") or name.endswith(".d.ts"):
+        return True
+    return False
+
+
+_SKIP_PACKAGE_DIRS = {"node_modules", ".next", "dist", "build", "coverage", ".git", "vendor"}
+
+
+def locate_package_json(root: Path) -> tuple[Path, dict]:
+    """Find the package.json this repo is built on.
+
+    Prefers the repository root (single-project repos), otherwise falls back to the
+    shallowest package.json under a workspace subdirectory (monorepos e.g. apps/,
+    packages/). Returns (directory, parsed json); empty dict when none is found.
+    """
+    root_json = root / "package.json"
+    if root_json.is_file():
+        try:
+            return root, json.loads(root_json.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, json.JSONDecodeError):
+            return root, {}
+
+    candidates: list[tuple[int, Path]] = []
+    if root.is_dir():
+        for path in root.rglob("package.json"):
+            parts = set(p.lower() for p in path.parts)
+            if parts & _SKIP_PACKAGE_DIRS:
+                continue
+            depth = len(path.relative_to(root).parts)
+            candidates.append((depth, path))
+    if not candidates:
+        return root, {}
+    candidates.sort(key=lambda item: (item[0], item[1].as_posix()))
+    chosen = candidates[0][1]
+    try:
+        data = json.loads(chosen.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, json.JSONDecodeError):
+        data = {}
+    return chosen.parent, data
 
 
 def import_specifiers(text: str) -> list[str]:
@@ -153,7 +219,7 @@ def file_complexity_estimate(text: str) -> int:
 # --- unused-import / variable detection (lexical only) --------------------------
 
 _IMPORT_LINE_RE = re.compile(
-    r"""^\s*import\s+(?:(?:([\w$]+)\s*,?\s*)?(?:\{([^}]*)\})?|(\*\s*as\s+([\w$]+)))\s+from\s+['"][^'"]+['"]\s*;?\s*$|^\s*import\s+['"][^'"]+['"]\s*;?\s*$"""
+    r"""^\s*import\s+(?:type\s+)?(?:(?:([\w$]+)\s*,?\s*)?(?:\{([^}]*)\})?|(\*\s*as\s+([\w$]+)))\s+from\s+['"][^'"]+['"]\s*;?\s*$|^\s*import\s+['"][^'"]+['"]\s*;?\s*$"""
 )
 _REQUIRE_RE = re.compile(
     r"""^\s*(?:const|let|var)\s+([\w$]+)\s*=\s*require\s*\(\s*['"][^'"]+['"]\s*\)\s*;?\s*$"""
@@ -202,6 +268,11 @@ def _named_imports(clause: str) -> list[str]:
     for part in clause.split(","):
         part = part.strip()
         if not part:
+            continue
+        # TypeScript inline type specifiers: `{ type Foo }`, `{ type Foo as Bar }`
+        if part.startswith("type "):
+            part = part[5:].lstrip()
+        elif part in ("type", "typeof"):
             continue
         alias = part.split(" as ")[-1].strip()
         if alias:

@@ -10,6 +10,8 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage
+htmlcov/
 
 # Scan data (tarballs, extracted sources, raw artifacts)
 data/
@@ -25,6 +27,8 @@ node_modules/
 out/
 build/
 dist/
+coverage/
+*.log
 npm-debug.log*
 
 # Editors / OS

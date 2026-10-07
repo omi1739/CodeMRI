@@ -1,9 +1,7 @@
 "use strict";
 
-const { b } = require("./b.js");
-
 function a() {
-  return b();
+  return "a";
 }
 
 module.exports = { a };

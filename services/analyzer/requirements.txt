@@ -7,3 +7,5 @@ httpx>=0.28
 pyyaml>=6.0
 python-dotenv>=1.2
 pytest>=9.1
+coverage>=7.6
+pytest-cov>=6.0

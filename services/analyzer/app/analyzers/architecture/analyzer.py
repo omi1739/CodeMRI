@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import posixpath
 from pathlib import Path
 
 from app.analyzers._shared import (
@@ -22,10 +23,11 @@ class ArchitectureAnalyzer:
     def run(self, ctx: ScanContext) -> list[Finding]:
         root = Path(ctx.source_dir)
         graph, file_set = figure_inventory(root, ctx.inventory)
+        alias_specs = _collect_non_local_specifiers(root, ctx.inventory)
         findings: list[Finding] = []
         findings.extend(self._circular(graph))
         findings.extend(self._god_modules(graph))
-        findings.extend(self._orphans(graph, file_set))
+        findings.extend(self._orphans(graph, file_set, alias_specs))
         findings.extend(self._high_risk(graph, file_set, root, ctx.inventory))
         return findings
 
@@ -92,7 +94,7 @@ class ArchitectureAnalyzer:
         ]
 
     # ARC-003 ------------------------------------------------------------------
-    def _orphans(self, graph: dict[str, set[str]], file_set: set[str]) -> list[Finding]:
+    def _orphans(self, graph: dict[str, set[str]], file_set: set[str], alias_specs: set[str]) -> list[Finding]:
         importers = _count_importers(graph)
         orphans = []
         for module in sorted(file_set):
@@ -103,6 +105,8 @@ class ArchitectureAnalyzer:
             if module.startswith(("test", "tests", "__tests__")) or "/test" in module or "test" in module.split("/")[-1]:
                 continue
             if not module.lower().endswith((".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")):
+                continue
+            if _referenced_by_alias(module, alias_specs):
                 continue
             orphans.append(module)
         if not orphans:
@@ -205,6 +209,35 @@ def _walk(root: Path, inventory: list[dict]):
     from app.analyzers._shared import iter_source_files
 
     return list(iter_source_files(root, inventory))
+
+
+def _collect_non_local_specifiers(root: Path, inventory: list[dict]) -> set[str]:
+    """Import specifiers that are not relative — e.g. `@/app/components/ui`,
+    `~components/Button` — which relative resolution cannot see."""
+    specs: set[str] = set()
+    for _, _, text in _walk(root, inventory):
+        for spec in import_specifiers(text):
+            if not is_local_specifier(spec):
+                specs.add(spec.strip())
+    return specs
+
+
+def _referenced_by_alias(module: str, alias_specs: set[str]) -> bool:
+    """Best-effort check that some aliased import points at `module`.
+
+    Path segments aren't guaranteed to resolve exactly (tsconfigs vary), so match
+    on the module's basename or on its repo-relative tail appearing in the spec.
+    """
+    stem = posixpath.splitext(module)[0]
+    base = posixpath.basename(stem)
+    for spec in alias_specs:
+        clean = spec.strip().strip("'\"")
+        tail = clean.split("/")[-1].split(".")[0]
+        if tail == base:
+            return True
+        if stem.endswith(clean.lstrip("/@~")):
+            return True
+    return False
 
 
 def _find_cycles(graph: dict[str, set[str]]) -> list[list[str]]:

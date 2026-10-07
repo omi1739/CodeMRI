@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import json
 import posixpath
 from pathlib import Path
 
+from app.analyzers._shared import locate_package_json
 from app.analyzers.base import Evidence, Finding, ScanContext
 
 CRITICAL_MODULE_HINTS = ("auth", "payment", "billing", "account", "session", "token")
@@ -20,7 +20,7 @@ class TestingAnalyzer:
     def run(self, ctx: ScanContext) -> list[Finding]:
         root = Path(ctx.source_dir)
         inventory = ctx.inventory or []
-        package = _read_package_json(root)
+        _, package = locate_package_json(root)
         findings: list[Finding] = []
         findings.extend(self._missing_tests(ctx, root, inventory, package))
         findings.extend(self._missing_test_script(package, inventory))
@@ -145,16 +145,6 @@ class TestingAnalyzer:
                 ],
             )
         ]
-
-
-def _read_package_json(root: Path) -> dict:
-    path = root / "package.json"
-    if not path.is_file():
-        return {}
-    try:
-        return json.loads(path.read_text(encoding="utf-8", errors="replace"))
-    except (OSError, json.JSONDecodeError):
-        return {}
 
 
 def _coverage_artifacts(root: Path, inventory: list[dict], scripts: dict) -> list[str]:

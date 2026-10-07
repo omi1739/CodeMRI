@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from app.analyzers._shared import locate_package_json
 from app.analyzers.base import Evidence, Finding, ScanContext
 from app.analyzers.dependencies.lockfile import (
     collect_dependencies,
@@ -89,7 +90,8 @@ class DependencyAnalyzer:
 
     def run(self, ctx: ScanContext) -> list[Finding]:
         root = Path(ctx.source_dir)
-        info = collect_dependencies(root)
+        pkg_dir, _ = locate_package_json(root)
+        info = collect_dependencies(pkg_dir)
         findings: list[Finding] = []
 
         findings.extend(self._lockfile_findings(info))

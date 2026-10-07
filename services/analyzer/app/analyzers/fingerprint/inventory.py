@@ -137,7 +137,11 @@ def build_inventory(source_dir: Path, max_files: int, max_file_size_kb: int) -> 
     root = source_dir.resolve()
 
     for current, dirs, files in os.walk(root):
-        dirs[:] = sorted(d for d in dirs if d not in IGNORE_DIRS and not d.startswith(".git"))
+        dirs[:] = sorted(
+            d
+            for d in dirs
+            if d not in IGNORE_DIRS and not (d.startswith(".git") and d not in {".github"})
+        )
         for filename in sorted(files):
             if len(entries) >= max_files:
                 return entries
